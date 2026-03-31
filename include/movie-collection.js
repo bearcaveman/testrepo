@@ -24,8 +24,33 @@
 		return String($n.text() || "");
 	}
 
-	function genresNorm(s) {
-		return norm(s).replace(/^\[/, "").replace(/\]$/, "").replace(/,/g, " ");
+	/** Raw genre text from export: primary = foreach genres; fallback = genresAsString (TMM). */
+	function genreExportText($c) {
+		var primary = $.trim(rawField($c, ".m-genres"));
+		if (primary.length) {
+			return rawField($c, ".m-genres");
+		}
+		return rawField($c, ".m-genres-fallback");
+	}
+
+	/** Split TMM / NFO shapes: "A, B", "[A, B]", "A; B", legacy pipes. */
+	function parseGenreLabels(raw) {
+		var s = String(raw || "").replace(/^\s*\[|\]\s*$/g, "");
+		var parts = s.split(/[,;|]/);
+		var out = [];
+		$.each(parts, function (_, p) {
+			var t = $.trim(p);
+			if (t) {
+				out.push(t);
+			}
+		});
+		return out;
+	}
+
+	function genreHaystackChunk($c) {
+		return $.map(parseGenreLabels(genreExportText($c)), function (lab) {
+			return norm(lab);
+		}).join(" ");
 	}
 
 	function getYearStr($card) {
@@ -38,6 +63,32 @@
 		return m ? norm(m[1]) : "";
 	}
 
+	/** ms since epoch at UTC midnight for yyyy-MM-dd, else Date.parse(data-added), else NaN */
+	function parseAddedMs($c) {
+		var iso = $.trim(rawField($c, ".m-added-iso"));
+		var p = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+		if (p) {
+			return Date.UTC(parseInt(p[1], 10), parseInt(p[2], 10) - 1, parseInt(p[3], 10));
+		}
+		var da = $c.find("a.movie-link").attr("data-added");
+		if (da) {
+			var t = Date.parse(da);
+			if (!isNaN(t)) {
+				return t;
+			}
+		}
+		return NaN;
+	}
+
+	function parseImdbNum($c) {
+		var s = $.trim(rawField($c, ".m-imdb"));
+		if (!s) {
+			return NaN;
+		}
+		var n = parseFloat(s.replace(",", "."));
+		return isNaN(n) ? NaN : n;
+	}
+
 	function parseYearNum(s) {
 		var n = parseInt(s, 10);
 		return isNaN(n) ? 0 : n;
@@ -48,9 +99,10 @@
 			[
 				rawField($card, ".m-title"),
 				rawField($card, ".m-actors"),
-				genresNorm(rawField($card, ".m-genres")),
+				genreHaystackChunk($card),
 				getYearStr($card),
 				rawField($card, ".m-rating"),
+				rawField($card, ".m-imdb"),
 				rawField($card, ".m-plot"),
 			].join(" ")
 		);
@@ -83,17 +135,22 @@
 			var titleLc = norm(rawField($c, ".m-title"));
 			var titleRaw = $.trim(rawField($c, ".m-title"));
 			var yearStr = getYearStr($c);
+			var genreListLc = $.map(parseGenreLabels(genreExportText($c)), function (lab) {
+				return norm(lab);
+			});
 			$c.data("mcMeta", {
 				haystack: buildHaystack($c),
 				titleLc: titleLc,
 				titleRaw: titleRaw,
 				actorsLc: norm(rawField($c, ".m-actors")),
-				genresLc: genresNorm(rawField($c, ".m-genres")),
+				genreListLc: genreListLc,
 				yearStr: yearStr,
 				yearNum: parseYearNum(yearStr),
 				watched: norm(rawField($c, ".m-watched")),
 				pathLc: norm(rawField($c, ".m-path")),
 				certLc: norm(rawField($c, ".m-rating")),
+				addedMs: parseAddedMs($c),
+				imdbNum: parseImdbNum($c),
 			});
 		});
 	}
@@ -103,25 +160,31 @@
 	}
 
 	function rebuildGenres() {
-		var seen = {};
+		var byNorm = {};
 		$(".movie-card").each(function () {
-			var g = rawField($(this), ".m-genres");
-			g = g.replace(/^\s*\[|\]\s*$/g, "");
-			$.each(g.split(","), function (_, part) {
-				var t = $.trim(part);
-				if (t) {
-					seen[t] = true;
+			var labels = parseGenreLabels(genreExportText($(this)));
+			$.each(labels, function (_, lab) {
+				var n = norm(lab);
+				if (n && !Object.prototype.hasOwnProperty.call(byNorm, n)) {
+					byNorm[n] = lab;
 				}
 			});
 		});
-		var list = $.map(seen, function (_, k) {
-			return k;
-		}).sort();
+		var pairs = $.map(byNorm, function (label, n) {
+			return { label: label, n: n };
+		});
+		pairs.sort(function (a, b) {
+			try {
+				return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
+			} catch (e0) {
+				return a.label.localeCompare(b.label);
+			}
+		});
 		var $sel = $("#search_genres");
 		var $first = $sel.find("option:first").clone();
 		$sel.empty().append($first);
-		$.each(list, function (_, g) {
-			$sel.append($("<option/>").attr("value", g).text(g));
+		$.each(pairs, function (_, p) {
+			$sel.append($("<option/>").attr("value", p.label).text(p.label));
 		});
 		try {
 			$sel.selectmenu("refresh");
@@ -152,6 +215,17 @@
 		} catch (e2) {}
 	}
 
+	function recentDaysLabel(v) {
+		var n = parseInt(v, 10);
+		if (isNaN(n) || n <= 0) {
+			return "Any time";
+		}
+		if (n === 1) {
+			return "Last 1 day";
+		}
+		return "Last " + n + " days";
+	}
+
 	function applyFilters() {
 		var $f = $("#searchForm");
 		var quick = norm($f.find("#quicksearch").val());
@@ -162,6 +236,8 @@
 		var must = $f.find("#search_path").val();
 		var rating = norm($f.find("#search_rating").val());
 		var genre = norm($f.find("#search_genres").val());
+		var recentDays = parseInt($f.find("#recentDays").val(), 10) || 0;
+		var minImdb = parseFloat(String($f.find("#minImdb").val()).replace(",", "."));
 
 		var n = 0;
 		$(".movie-card").each(function () {
@@ -196,8 +272,23 @@
 			if (show && rating && m.certLc !== rating) {
 				show = false;
 			}
-			if (show && genre && m.genresLc.indexOf(genre) < 0) {
+			if (show && genre && $.inArray(genre, m.genreListLc) < 0) {
 				show = false;
+			}
+			if (show && recentDays > 0) {
+				if (isNaN(m.addedMs)) {
+					show = false;
+				} else {
+					var cutoff = Date.now() - recentDays * 86400000;
+					if (m.addedMs < cutoff) {
+						show = false;
+					}
+				}
+			}
+			if (show && !isNaN(minImdb) && minImdb > 0) {
+				if (isNaN(m.imdbNum) || m.imdbNum < minImdb) {
+					show = false;
+				}
 			}
 
 			$c.toggle(show);
@@ -259,6 +350,24 @@
 			if (mode === "year-asc") {
 				return ma.yearNum - mb.yearNum;
 			}
+			if (mode === "added-desc") {
+				if (isNaN(ma.addedMs)) {
+					return 1;
+				}
+				if (isNaN(mb.addedMs)) {
+					return -1;
+				}
+				return mb.addedMs - ma.addedMs;
+			}
+			if (mode === "imdb-desc") {
+				if (isNaN(ma.imdbNum)) {
+					return 1;
+				}
+				if (isNaN(mb.imdbNum)) {
+					return -1;
+				}
+				return mb.imdbNum - ma.imdbNum;
+			}
 			return 0;
 		});
 		$.each(cards, function (_, el) {
@@ -278,6 +387,10 @@
 		var $grid = $(".movie-grid");
 		initCardCache($grid);
 		captureOriginalOrder($grid);
+		applySort($("#sortOrder").val() || "added-desc");
+		try {
+			$("#sortOrder").selectmenu("refresh");
+		} catch (eSort) {}
 		rebuildGenres();
 		rebuildRatings();
 		refreshFooterCountAll();
@@ -285,9 +398,15 @@
 
 		var $page = $("#AllMovies");
 
+		$("#recentDaysOut").text(recentDaysLabel($("#recentDays").val()));
+
 		$page
 			.off(".mc")
-			.on("input.mc change.mc", "#quicksearch, #moviename, #actorname, #yearfilter", scheduleApply)
+			.on("input.mc change.mc", "#quicksearch, #moviename, #actorname, #yearfilter, #minImdb", scheduleApply)
+			.on("input.mc change.mc", "#recentDays", function () {
+				$("#recentDaysOut").text(recentDaysLabel($(this).val()));
+				scheduleApply();
+			})
 			.on("change.mc", "#search_newmovie, #search_path, #search_rating, #search_genres", applyFilters)
 			.on("change.mc", "#sortOrder", function () {
 				applySort($(this).val());
@@ -335,16 +454,23 @@
 		if (f.yearfilter) {
 			f.yearfilter.value = "";
 		}
+		if (f.minImdb) {
+			f.minImdb.value = "";
+		}
+		if (f.recentDays) {
+			f.recentDays.value = "0";
+		}
+		$("#recentDaysOut").text(recentDaysLabel(0));
 		f.search_newmovie.value = "";
 		f.search_path.value = "";
 		f.search_rating.value = "";
 		f.search_genres.value = "";
 		var $sort = $("#sortOrder");
-		$sort.val("export");
+		$sort.val("added-desc");
 		try {
 			$sort.selectmenu("refresh");
 		} catch (e9) {}
-		applySort("export");
+		applySort("added-desc");
 		$(".movie-card").show();
 		refreshFooterCountAll();
 		try {
