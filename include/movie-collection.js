@@ -63,8 +63,23 @@
 		return m ? norm(m[1]) : "";
 	}
 
-	/** ms since epoch at UTC midnight for yyyy-MM-dd, else Date.parse(data-added), else NaN */
+	/**
+	 * Prefer data-added-key (yyyy-MM-dd from export, digits only for compare) — avoids Date.parse on Android WebView.
+	 * Then ISO span, then data-added string fallbacks.
+	 */
 	function parseAddedMs($c) {
+		var dk = $c.attr("data-added-key");
+		if (dk) {
+			var num = parseInt(String(dk).replace(/\D/g, ""), 10);
+			if (!isNaN(num) && num >= 19000101 && num <= 29991231) {
+				var y = Math.floor(num / 10000);
+				var mo = Math.floor((num % 10000) / 100);
+				var d = num % 100;
+				if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+					return Date.UTC(y, mo - 1, d);
+				}
+			}
+		}
 		var iso = $.trim(rawField($c, ".m-added-iso"));
 		var p = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
 		if (p) {
@@ -78,6 +93,10 @@
 			}
 		}
 		return NaN;
+	}
+
+	function addedKeyNum($c) {
+		return parseInt(String($c.attr("data-added-key") || "").replace(/\D/g, ""), 10) || 0;
 	}
 
 	function parseImdbNum($c) {
@@ -309,12 +328,13 @@
 	}
 
 	function applySort(mode) {
+		mode = String(mode || "").trim() || "added-desc";
 		var $grid = $(".movie-grid");
 		if (!$grid.length) {
 			return;
 		}
 
-		if (mode === "export" || !mode) {
+		if (mode === "export") {
 			$.each(originalOrder, function (_, el) {
 				$grid.append(el);
 			});
@@ -351,10 +371,15 @@
 				return ma.yearNum - mb.yearNum;
 			}
 			if (mode === "added-desc") {
-				if (isNaN(ma.addedMs)) {
+				var naMs = isNaN(ma.addedMs);
+				var nbMs = isNaN(mb.addedMs);
+				if (naMs && nbMs) {
+					return addedKeyNum($b) - addedKeyNum($a);
+				}
+				if (naMs) {
 					return 1;
 				}
-				if (isNaN(mb.addedMs)) {
+				if (nbMs) {
 					return -1;
 				}
 				return mb.addedMs - ma.addedMs;
@@ -400,18 +425,29 @@
 
 		$("#recentDaysOut").text(recentDaysLabel($("#recentDays").val()));
 
-		$page
-			.off(".mc")
-			.on("input.mc change.mc", "#quicksearch, #moviename, #actorname, #yearfilter, #minImdb", scheduleApply)
-			.on("input.mc change.mc", "#recentDays", function () {
-				$("#recentDaysOut").text(recentDaysLabel($(this).val()));
-				scheduleApply();
-			})
-			.on("change.mc", "#search_newmovie, #search_path, #search_rating, #search_genres", applyFilters)
-			.on("change.mc", "#sortOrder", function () {
-				applySort($(this).val());
+		/* Native <select> change: delegate from form (works on Android; jQM selectmenu often does not). */
+		$("#searchForm")
+			.off(".mcSel")
+			.on("change.mcSel", "select", function () {
+				if (this.id === "sortOrder") {
+					applySort($(this).val());
+				}
 				applyFilters();
 			});
+
+		$page
+			.off(".mc")
+			.on("input.mc change.mc", "#quicksearch, #moviename, #actorname, #yearfilter", scheduleApply)
+			.on("input.mc change.mc touchend.mc", "#recentDays", function () {
+				$("#recentDaysOut").text(recentDaysLabel($(this).val()));
+				scheduleApply();
+			});
+
+		/* WebView timing: re-apply default sort after layout (fixes wrong initial order on some phones). */
+		setTimeout(function () {
+			applySort($("#sortOrder").val() || "added-desc");
+			applyFilters();
+		}, 150);
 
 		$(document).off(".mcFocus").on("keydown.mcFocus", function (e) {
 			var tag = (e.target && e.target.tagName) || "";
@@ -432,7 +468,7 @@
 		});
 
 		try {
-			$("#filterPanel").collapsible({ collapsed: false });
+			$("#filterPanel").collapsible({ collapsed: true });
 		} catch (e5) {}
 	}
 
@@ -456,6 +492,9 @@
 		}
 		if (f.minImdb) {
 			f.minImdb.value = "";
+			try {
+				$(f.minImdb).selectmenu("refresh");
+			} catch (eMin) {}
 		}
 		if (f.recentDays) {
 			f.recentDays.value = "0";
