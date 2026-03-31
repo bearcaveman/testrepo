@@ -139,6 +139,10 @@
 			clear: none !important;
 			display: block !important;
 		}
+		/* Must beat display:block !important above — jQuery .hide() loses to that rule otherwise */
+		#AllMovies #searchResults .movie-card.mc-filter-hidden {
+			display: none !important;
+		}
 		@media (min-width: 600px) {
 			#AllMovies #searchResults .movie-grid {
 				grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)) !important;

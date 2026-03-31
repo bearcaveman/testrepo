@@ -7,6 +7,31 @@
 
 	var debounceTimer;
 	var originalOrder = [];
+	var FILTER_HIDDEN = "mc-filter-hidden";
+
+	function setCardFilteredVisible($c, show) {
+		if (show) {
+			$c.removeClass(FILTER_HIDDEN);
+		} else {
+			$c.addClass(FILTER_HIDDEN);
+		}
+	}
+
+	/** Grid CSS uses display:block !important on cards; inline display:none from .hide() loses. Inject rule if missing. */
+	function ensureFilterHiddenCss() {
+		if (document.getElementById("mc-filter-hidden-style")) {
+			return;
+		}
+		var el = document.createElement("style");
+		el.id = "mc-filter-hidden-style";
+		el.type = "text/css";
+		el.appendChild(
+			document.createTextNode(
+				"#AllMovies #searchResults .movie-card.mc-filter-hidden{display:none!important}"
+			)
+		);
+		document.head.appendChild(el);
+	}
 
 	function norm(s) {
 		return $.trim(String(s || "").toLowerCase().replace(/\s+/g, " "));
@@ -315,7 +340,7 @@
 				}
 			}
 
-			$c.toggle(show);
+			setCardFilteredVisible($c, show);
 			if (show) {
 				n++;
 			}
@@ -411,6 +436,7 @@
 	}
 
 	function bindPage() {
+		ensureFilterHiddenCss();
 		var $grid = $(".movie-grid");
 		initCardCache($grid);
 		captureOriginalOrder($grid);
@@ -525,7 +551,7 @@
 			$sort.selectmenu("refresh");
 		} catch (e9) {}
 		applySort("added-desc");
-		$(".movie-card").show();
+		$(".movie-card").removeClass(FILTER_HIDDEN);
 		refreshFooterCountAll();
 		try {
 			$("#footer").trigger("updatelayout");
@@ -542,7 +568,7 @@
 				pool.push(this);
 			}
 		});
-		$(".movie-card").hide();
+		$(".movie-card").addClass(FILTER_HIDDEN);
 		if (!pool.length) {
 			$("#numMovies").text("0 Movies (no must-see)");
 			try {
@@ -551,7 +577,7 @@
 			return false;
 		}
 		var pick = pool[Math.floor(Math.random() * pool.length)];
-		$(pick).show();
+		$(pick).removeClass(FILTER_HIDDEN);
 		$("#numMovies").text("1 Movies");
 		try {
 			$("#footer").trigger("updatelayout");
@@ -570,6 +596,7 @@
 
 	$(document).on("pageinit", "#AllMovies", bindPageOnce);
 	$(function () {
+		ensureFilterHiddenCss();
 		bindPageOnce();
 	});
 })(jQuery);
