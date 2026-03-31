@@ -145,32 +145,37 @@
 		return true;
 	}
 
+	function ensureCardMeta($c) {
+		if ($c.data("mcMeta")) {
+			return $c.data("mcMeta");
+		}
+		var titleLc = norm(rawField($c, ".m-title"));
+		var titleRaw = $.trim(rawField($c, ".m-title"));
+		var yearStr = getYearStr($c);
+		var genreListLc = $.map(parseGenreLabels(genreExportText($c)), function (lab) {
+			return norm(lab);
+		});
+		var meta = {
+			haystack: buildHaystack($c),
+			titleLc: titleLc,
+			titleRaw: titleRaw,
+			actorsLc: norm(rawField($c, ".m-actors")),
+			genreListLc: genreListLc,
+			yearStr: yearStr,
+			yearNum: parseYearNum(yearStr),
+			watched: norm(rawField($c, ".m-watched")),
+			pathLc: norm(rawField($c, ".m-path")),
+			certLc: norm(rawField($c, ".m-rating")),
+			addedMs: parseAddedMs($c),
+			imdbNum: parseImdbNum($c),
+		};
+		$c.data("mcMeta", meta);
+		return meta;
+	}
+
 	function initCardCache($grid) {
 		$grid.find(".movie-card").each(function () {
-			var $c = $(this);
-			if ($c.data("mcMeta")) {
-				return;
-			}
-			var titleLc = norm(rawField($c, ".m-title"));
-			var titleRaw = $.trim(rawField($c, ".m-title"));
-			var yearStr = getYearStr($c);
-			var genreListLc = $.map(parseGenreLabels(genreExportText($c)), function (lab) {
-				return norm(lab);
-			});
-			$c.data("mcMeta", {
-				haystack: buildHaystack($c),
-				titleLc: titleLc,
-				titleRaw: titleRaw,
-				actorsLc: norm(rawField($c, ".m-actors")),
-				genreListLc: genreListLc,
-				yearStr: yearStr,
-				yearNum: parseYearNum(yearStr),
-				watched: norm(rawField($c, ".m-watched")),
-				pathLc: norm(rawField($c, ".m-path")),
-				certLc: norm(rawField($c, ".m-rating")),
-				addedMs: parseAddedMs($c),
-				imdbNum: parseImdbNum($c),
-			});
+			ensureCardMeta($(this));
 		});
 	}
 
@@ -261,7 +266,7 @@
 		var n = 0;
 		$(".movie-card").each(function () {
 			var $c = $(this);
-			var m = $c.data("mcMeta");
+			var m = ensureCardMeta($c);
 			var show = true;
 
 			if (quick && !tokensAllMatch(m.haystack, quick)) {
@@ -345,11 +350,8 @@
 		cards.sort(function (a, b) {
 			var $a = $(a);
 			var $b = $(b);
-			var ma = $a.data("mcMeta");
-			var mb = $b.data("mcMeta");
-			if (!ma || !mb) {
-				return 0;
-			}
+			var ma = ensureCardMeta($a);
+			var mb = ensureCardMeta($b);
 			if (mode === "title-asc") {
 				try {
 					return ma.titleRaw.localeCompare(mb.titleRaw, undefined, { sensitivity: "base" });
@@ -441,6 +443,19 @@
 			.on("input.mc change.mc touchend.mc", "#recentDays", function () {
 				$("#recentDaysOut").text(recentDaysLabel($(this).val()));
 				scheduleApply();
+			})
+			.off("click.mcBtn", "#filter, #reset, #random")
+			.on("click.mcBtn", "#filter, #reset, #random", function (e) {
+				e.preventDefault();
+				var id = this.id;
+				if (id === "filter") {
+					applyFilters();
+				} else if (id === "reset") {
+					window.goReset();
+				} else if (id === "random") {
+					window.goRandom();
+				}
+				return false;
 			});
 
 		/* WebView timing: re-apply default sort after layout (fixes wrong initial order on some phones). */
@@ -522,8 +537,8 @@
 		var pool = [];
 		$(".movie-card").each(function () {
 			var $c = $(this);
-			var m = $c.data("mcMeta");
-			if (m && m.pathLc.indexOf("must see") >= 0) {
+			var m = ensureCardMeta($c);
+			if (m.pathLc.indexOf("must see") >= 0) {
 				pool.push(this);
 			}
 		});
